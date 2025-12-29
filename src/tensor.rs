@@ -92,7 +92,7 @@ impl Tensor {
         let mut x_hat_data = vec![0.0; x.data.len()];
         let mut inv_stds = vec![0.0; rows];
 
-        // We chunk the input and output into rows of 768
+        // We chunk the input and output into rows
         out_data.par_chunks_mut(cols)
             .zip(x_hat_data.par_chunks_mut(cols))
             .zip(inv_stds.par_iter_mut())
@@ -275,7 +275,7 @@ impl Tensor {
         let go_rows = grad_out.data.len() / go_cols;
         let go_flat = Tensor::new(vec![go_rows, go_cols], grad_out.data.clone());
 
-        // Now it's [768, 1024] @ [1024, 50257]
+
         let grad_b = Tensor::matmul(&a_flat.transpose(), &go_flat);
 
         (grad_a, grad_b)

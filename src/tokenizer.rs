@@ -5,6 +5,8 @@ use rayon::prelude::*;
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use crate::tensor::Tensor;
+use crate::transformer::LayerCache;
 
 type Word = Vec<u32>;
 type MergeType = (u32, u32);
@@ -280,4 +282,6 @@ impl Tokenizer {
         };
         Ok(tokens)
     }
+
+    
 }

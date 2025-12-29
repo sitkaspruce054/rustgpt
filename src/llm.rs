@@ -534,11 +534,7 @@ impl LLM {
 
         let mut blocks = Vec::with_capacity(n_layer);
         for _ in 0..n_layer {
-            // GPT-2 residual scaling trick
-            let res_scale = 1.0 / ((2 * n_layer) as f32).sqrt();
-
-            // Pass n_head here so the block knows its internal geometry
-            blocks.push(TransformerBlock::new_random(n_embd, n_head, res_scale));
+            blocks.push(TransformerBlock::new_random(n_embd, n_head, n_layer));
         }
 
         let ln_f_gamma = Tensor::constant(vec![n_embd], 1.0);

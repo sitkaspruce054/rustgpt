@@ -5,7 +5,7 @@ mod llm;
 mod dataloader;
 mod adam;
 
-use std::fs;
+use std::{env, fs};
 use std::path::Path;
 use std::time::Instant;
 use crate::llm::LLM;
@@ -14,6 +14,13 @@ use crate::dataloader::DataLoader;
 use crate::adam::AdamW;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    let args: Vec<String> = env::args().collect();
+    let is_inference = args.iter().any(|arg| arg == "--infer");
+
+    // --- 1. CONFIGURATION ---
+
+    let checkpoint_to_load = "stories2_d512_e2.safetensors";
     // --- 1. CONFIGURATION (STORYTELLER V1: d=512, L=8, ctx=128) ---
     let tokenizer_path = "stories_tokenizer.json";
     let training_data_path = "TinyStories-valid.txt";
@@ -28,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let gpt2_regex = r#"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#;
     let re = fancy_regex::Regex::new(gpt2_regex).unwrap();
+
 
     // --- 2. TOKENIZER ---
     let mut tokenizer = if Path::new(tokenizer_path).exists() {
@@ -52,6 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Tokenizer::save_tokens_to_bin(&tokens, token_cache_path)?;
         tokens
     };
+    if is_inference {
+        run_inference_mode(&tokenizer, checkpoint_to_load)?;
+        return Ok(());
+    }
 
     let split_idx = (all_tokens.len() as f32 * 0.9) as usize;
     let train_tokens = all_tokens[..split_idx].to_vec();
@@ -62,13 +74,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 4. MODEL RECOVERY LOGIC ---
     // We revert to Epoch 1 because Epochs 2-4 diverged.
-    let checkpoint_to_load = "stories_d512_e1.safetensors";
+    //let checkpoint_to_load = "stories_d512_e1.safetensors";
     let mut start_epoch = 0;
     let total_epochs = 50;
 
     let mut model = if Path::new(checkpoint_to_load).exists() {
         println!("🩹 RECOVERY MODE: Loading stable checkpoint {}...", checkpoint_to_load);
-        start_epoch = 2;
+        start_epoch = 3;
         LLM::from_pretrained(checkpoint_to_load)
     } else {
         println!("🌱 Initializing Fresh Storyteller V1 (d=512, L=8, ctx=128)...");
@@ -145,8 +157,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let res = model.generate(prompt_tokens, 100, 0.7, 0.9, &tokenizer);
         println!("\n[SAMPLE]: {}\n", tokenizer.decode(&res));
 
-        let checkpoint_name = format!("stories_d512_e{}.safetensors", epoch);
+        let checkpoint_name = format!("stories2_d512_e{}.safetensors", epoch);
         model.save_checkpoint(&checkpoint_name);
+    }
+
+    Ok(())
+}
+
+fn run_inference_mode(tokenizer: &Tokenizer, checkpoint_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Loading model for Inference: {}...", checkpoint_path);
+    let mut model = LLM::from_pretrained(checkpoint_path);
+
+    use std::io::{self, Write};
+    let stdin = io::stdin();
+
+    loop {
+        print!("\n📝 Enter prompt (or 'exit'): ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        stdin.read_line(&mut input)?;
+        let prompt = input.trim();
+
+        if prompt == "exit" { break; }
+        if prompt.is_empty() { continue; }
+
+        let prompt_tokens = tokenizer.encode(prompt);
+
+        // Settings for higher quality: Lower temperature (0.7) and Top-P (0.9)
+        let res = model.generate(prompt_tokens, 30, 0.75, 0.9, &tokenizer);
+
+        println!("\n🤖 Model says:\n{}", tokenizer.decode(&res));
+        println!("\n---");
     }
 
     Ok(())
