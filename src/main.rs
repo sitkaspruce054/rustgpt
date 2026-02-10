@@ -83,14 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 4. MODEL RECOVERY LOGIC ---
     // We revert to Epoch 1 because Epochs 2-4 diverged.
     //let checkpoint_to_load = "stories_d512_e1.safetensors";
-    let mut start_epoch = 0;
+    let start_epoch = 0;
     let total_epochs = 50;
 
-    let mut model = if Path::new(checkpoint_to_load).exists() {
-        println!("RECOVERY MODE: Loading stable checkpoint {}...", checkpoint_to_load);
-        start_epoch = 3;
-        LLM::from_pretrained(checkpoint_to_load)
-    } else {
+    let mut model = {
         println!("Initializing Fresh Storyteller V2 (d=512, L=8, ctx=256)...");
         LLM::new_random(target_vocab_size as usize, n_embd, n_head, n_layer, context_len)
     };
