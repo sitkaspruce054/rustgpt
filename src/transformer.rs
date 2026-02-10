@@ -23,16 +23,16 @@ pub struct TransformerBlock {
 }
 
 pub struct LayerCache {
-    pub ln1_x_hat: Tensor,
+
     pub ln1_inv_std: Vec<f32>,
     pub ln1_out: Tensor,
-    pub qkv_combined: Tensor,
+
     pub q: Tensor,
     pub k: Tensor,
     pub v: Tensor,
     pub attn_probs: Tensor,
     pub merged_ctx: Tensor,
-    pub ln2_x_hat: Tensor,
+
     pub ln2_inv_std: Vec<f32>,
     pub ln2_out: Tensor,
     pub mlp_fc_out: Tensor,
@@ -41,11 +41,10 @@ pub struct LayerCache {
 
 pub struct ForwardCache {
     pub token_ids: Vec<u32>,
-    pub initial_embeddings: Tensor,
     pub block_caches: Vec<LayerCache>,
 
     // --- Final Head Path ---
-    pub pre_ln_f_x: Tensor,      // The residual stream before final LayerNorm
+     // The residual stream before final LayerNorm
     pub ln_f_x_hat: Tensor,      // Normalized x (mean 0, std 1)
     pub ln_f_inv_std: Vec<f32>,  // 1/sqrt(var + eps)
     pub final_norm_out: Tensor,  // Input to the LM Head matmul
@@ -149,13 +148,13 @@ impl TransformerBlock {
 
     pub fn forward_train(&self, x: &Tensor) -> (Tensor, LayerCache) {
         // --- 1. Attention Path ---
-        let (norm_1, ln1_x_hat, ln1_inv_std) = Tensor::layernorm_for_train(x, &self.ln_1_gamma, &self.ln_1_beta, 1e-5);
-        let (attn_out, q, k, v, attn_probs, merged_ctx, qkv_combined) = self.mha_for_train(&norm_1);
+        let (norm_1, _, ln1_inv_std) = Tensor::layernorm_for_train(x, &self.ln_1_gamma, &self.ln_1_beta, 1e-5);
+        let (attn_out, q, k, v, attn_probs, merged_ctx, _) = self.mha_for_train(&norm_1);
 
         let x_mid = x.add(&attn_out);
 
         // --- 2. MLP Path ---
-        let (norm_2, ln2_x_hat, ln2_inv_std) = Tensor::layernorm_for_train(&x_mid, &self.ln_2_gamma, &self.ln_2_beta, 1e-5);
+        let (norm_2, _, ln2_inv_std) = Tensor::layernorm_for_train(&x_mid, &self.ln_2_gamma, &self.ln_2_beta, 1e-5);
 
         // Feed Forward internals
         let mlp_fc_out = Tensor::matmul(&norm_2, &self.mlp_fc_weight).add_bias(&self.mlp_fc_bias);
@@ -167,14 +166,13 @@ impl TransformerBlock {
 
         // --- 3. Construct Cache ---
         let cache = LayerCache {
-            ln1_x_hat,
             ln1_inv_std,
             ln1_out: norm_1,
-            qkv_combined,
+
             q, k, v,
             attn_probs,
             merged_ctx,
-            ln2_x_hat,
+
             ln2_inv_std,
             ln2_out: norm_2,
             mlp_fc_out,
@@ -366,23 +364,23 @@ impl TransformerBlock {
         ]
     }
 
-    pub fn clip_gradients(&mut self, max_norm: f32) {
-        let mut total_norm: f32 = 0.0;
-        for weight in self.get_weights_mut() {
-            if let Some(g) = &weight.grad {
-                total_norm += g.iter().map(|x| x * x).sum::<f32>();
-            }
-        }
-        total_norm = total_norm.sqrt();
-        if total_norm > max_norm {
-            let scale = max_norm / total_norm;
-            for weight in self.get_weights_mut() {
-                if let Some(g) = &mut weight.grad {
-                    for val in g.iter_mut() { *val *= scale; }
-                }
-            }
-        }
-    }
+    // pub fn clip_gradients(&mut self, max_norm: f32) {
+    //     let mut total_norm: f32 = 0.0;
+    //     for weight in self.get_weights_mut() {
+    //         if let Some(g) = &weight.grad {
+    //             total_norm += g.iter().map(|x| x * x).sum::<f32>();
+    //         }
+    //     }
+    //     total_norm = total_norm.sqrt();
+    //     if total_norm > max_norm {
+    //         let scale = max_norm / total_norm;
+    //         for weight in self.get_weights_mut() {
+    //             if let Some(g) = &mut weight.grad {
+    //                 for val in g.iter_mut() { *val *= scale; }
+    //             }
+    //         }
+    //     }
+    // }
 
     // --- Helpers ---
     fn combine_qkv(&self, d_q: Vec<f32>, d_k: Vec<f32>, d_v: Vec<f32>, seq_len: usize, n_embd: usize, batch_size: usize) -> Tensor {
@@ -543,10 +541,10 @@ impl TransformerBlock {
 
     // Inference Forward
     pub fn forward(&self, x: &Tensor) -> Tensor {
-        let (norm_1, _, _) = Tensor::layernorm_for_train(x, &self.ln_1_gamma, &self.ln_1_beta, 1e-5);
+        let norm_1 = Tensor::layernorm(x, &self.ln_1_gamma, &self.ln_1_beta, 1e-5);
         let (attn_out, _, _, _, _, _, _) = self.mha_for_train(&norm_1);
         let x_mid = x.add(&attn_out);
-        let (norm_2, _, _) = Tensor::layernorm_for_train(&x_mid, &self.ln_2_gamma, &self.ln_2_beta, 1e-5);
+        let norm_2 = Tensor::layernorm(&x_mid, &self.ln_2_gamma, &self.ln_2_beta, 1e-5);
 
         // FFN
         let mlp_fc_out = Tensor::matmul(&norm_2, &self.mlp_fc_weight).add_bias(&self.mlp_fc_bias);

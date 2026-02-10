@@ -9,9 +9,8 @@ pub struct AdamW {
     pub eps: f32,
     pub weight_decay: f32,
     pub step: u32,
-    // Storage for the buffers, mapped by a unique ID or pointer to the weights
-    pub m_buffers: HashMap<*const f32, Vec<f32>>,
-    pub v_buffers: HashMap<*const f32, Vec<f32>>,
+    pub m_buffers: HashMap<usize, Vec<f32>>,
+    pub v_buffers: HashMap<usize, Vec<f32>>,
 }
 
 
@@ -38,14 +37,15 @@ impl AdamW {
         let bc2 = 1.0 - self.beta2.powf(t);
         let step_size = self.lr / bc1;
 
-        for weight in weights {
-            // CHANGE: Use if let instead of expect()
+        for (idx, weight) in weights.iter_mut().enumerate() {
+
             if let Some(grad) = &weight.grad {
                 let data = &mut weight.data;
-
-                let m = self.m_buffers.entry(data.as_ptr()).or_insert_with(|| vec![0.0; data.len()]);
-                let v = self.v_buffers.entry(data.as_ptr()).or_insert_with(|| vec![0.0; data.len()]);
-
+                // first moment estimate
+                let m = self.m_buffers.entry(idx).or_insert_with(|| vec![0.0; data.len()]);
+                // the second raw moment estimate
+                let v = self.v_buffers.entry(idx).or_insert_with(|| vec![0.0; data.len()]);
+                
                 data.par_iter_mut()
                     .zip(grad.par_iter())
                     .zip(m.par_iter_mut())
@@ -59,7 +59,6 @@ impl AdamW {
                         *w -= step_size * (*mi) / (v_hat.sqrt() + self.eps);
                     });
             }
-            // If grad is None, we just skip this weight for this step.
         }
     }
 }

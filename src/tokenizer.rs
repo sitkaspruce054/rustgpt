@@ -5,8 +5,7 @@ use rayon::prelude::*;
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use crate::tensor::Tensor;
-use crate::transformer::LayerCache;
+
 
 type Word = Vec<u32>;
 type MergeType = (u32, u32);
@@ -277,9 +276,9 @@ impl Tokenizer {
         let mut file = File::open(path)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        let tokens: Vec<u32> = unsafe {
-            std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4).to_vec()
-        };
+        let tokens: Vec<u32> = bytes.chunks_exact(4)
+            .map(|c| u32::from_ne_bytes(c.try_into().unwrap()))
+            .collect();
         Ok(tokens)
     }
 

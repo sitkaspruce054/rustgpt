@@ -20,18 +20,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 1. CONFIGURATION ---
 
-    let checkpoint_to_load = "stories2_d512_e2.safetensors";
+    let checkpoint_to_load = "stories2_d512_e1.safetensors";
     // --- 1. CONFIGURATION (STORYTELLER V1: d=512, L=8, ctx=128) ---
-    let tokenizer_path = "stories_tokenizer.json";
-    let training_data_path = "TinyStories-valid.txt";
-    let token_cache_path = "stories_ctx128.bin";
+    let tokenizer_path = "stories50_tokenizer.json";
+    let training_data_path = "TinyStoriesV2-GPT4-train.txt";
+    let token_cache_path = "stories_ctx256.bin";
 
     let target_vocab_size = 5000;
     let n_embd = 512;
     let n_layer = 8;
     let n_head = 8;
-    let context_len = 128;
-    let batch_size = 32;
+    let context_len = 256;
+    let batch_size = 16;
 
     let gpt2_regex = r#"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#;
     let re = fancy_regex::Regex::new(gpt2_regex).unwrap();
@@ -54,11 +54,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let all_tokens = if Path::new(token_cache_path).exists() {
         Tokenizer::load_tokens_from_bin(token_cache_path)?
     } else {
-        println!("✍️ Tokenizing for ctx=128...");
+        println!("✍️ Tokenizing for ctx=256...");
         let full_text = fs::read_to_string(training_data_path)?;
         let tokens = tokenizer.encode(&full_text);
-        Tokenizer::save_tokens_to_bin(&tokens, token_cache_path)?;
-        tokens
+
+        let limit = 50_000_000;
+        let subset_tokens = if tokens.len() > limit {
+            println!("Taking subset");
+            tokens[..limit].to_vec()
+        } else {
+            tokens
+        };
+        Tokenizer::save_tokens_to_bin(&subset_tokens, token_cache_path)?;
+        subset_tokens
     };
     if is_inference {
         run_inference_mode(&tokenizer, checkpoint_to_load)?;
@@ -79,16 +87,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let total_epochs = 50;
 
     let mut model = if Path::new(checkpoint_to_load).exists() {
-        println!("🩹 RECOVERY MODE: Loading stable checkpoint {}...", checkpoint_to_load);
+        println!("RECOVERY MODE: Loading stable checkpoint {}...", checkpoint_to_load);
         start_epoch = 3;
         LLM::from_pretrained(checkpoint_to_load)
     } else {
-        println!("🌱 Initializing Fresh Storyteller V1 (d=512, L=8, ctx=128)...");
+        println!("Initializing Fresh Storyteller V2 (d=512, L=8, ctx=256)...");
         LLM::new_random(target_vocab_size as usize, n_embd, n_head, n_layer, context_len)
     };
-
-    // --- 5. ULTRA-SAFE TRAINING SETUP ---
-    // Deep models (L=8) are prone to gradient explosion; we use a lower LR and tighter clipping.
+    
     let max_lr = 6e-5;
     let min_lr = 1e-5;
     let warmup_steps = 1000;
@@ -154,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\n📊 EPOCH {} COMPLETE | Val Loss: {:.4}", epoch, val_loss);
 
         let prompt_tokens = tokenizer.encode("Once upon a time, there was a");
-        let res = model.generate(prompt_tokens, 100, 0.7, 0.9, &tokenizer);
+        let res = model.generate(prompt_tokens, 256, 0.7, 0.9, &tokenizer);
         println!("\n[SAMPLE]: {}\n", tokenizer.decode(&res));
 
         let checkpoint_name = format!("stories2_d512_e{}.safetensors", epoch);
@@ -166,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_inference_mode(tokenizer: &Tokenizer, checkpoint_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Loading model for Inference: {}...", checkpoint_path);
-    let mut model = LLM::from_pretrained(checkpoint_path);
+    let model = LLM::from_pretrained(checkpoint_path);
 
     use std::io::{self, Write};
     let stdin = io::stdin();
@@ -185,7 +191,7 @@ fn run_inference_mode(tokenizer: &Tokenizer, checkpoint_path: &str) -> Result<()
         let prompt_tokens = tokenizer.encode(prompt);
 
         // Settings for higher quality: Lower temperature (0.7) and Top-P (0.9)
-        let res = model.generate(prompt_tokens, 30, 0.75, 0.9, &tokenizer);
+        let res = model.generate(prompt_tokens, 256, 0.75, 0.9, &tokenizer);
 
         println!("\n🤖 Model says:\n{}", tokenizer.decode(&res));
         println!("\n---");

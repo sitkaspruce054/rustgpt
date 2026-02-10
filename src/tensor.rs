@@ -108,7 +108,7 @@ impl Tensor {
                 *inv_std = i_std;
 
                 // 2. Normalize and Scale
-                for (i, (((o, xh), &xi), (&g, &b))) in out_row.iter_mut()
+                for (_, (((o, xh), &xi), (&g, &b))) in out_row.iter_mut()
                     .zip(x_hat_row.iter_mut())
                     .zip(x_row.iter())
                     .zip(gamma.data.iter().zip(beta.data.iter()))
@@ -282,18 +282,16 @@ impl Tensor {
     }
 
 
-    pub fn get_index(&self,coords: &[usize]) -> usize {
-        coords.iter().zip(&self.strides).map(|(c,s)| c * s).sum()
-    }
+
 
     pub fn matmul(a: &Tensor, b: &Tensor) -> Tensor {
         let a_rank = a.shape.len();
-        let b_rank = b.shape.len();
 
 
-        // For A [1, 1024, 768], K is 768 (the last dimension)
+
+
         let k_a = a.shape[a_rank - 1];
-        // For B [768, 2304], K is 768 (the first dimension)
+
         let k_b = b.shape[0];
 
         assert_eq!(k_a, k_b, "MatMul Inner Dimension Mismatch: A is {:?}, B is {:?}", a.shape, b.shape);
@@ -362,12 +360,6 @@ impl Tensor {
 
     }
 
-    pub fn gelu(&self) -> Tensor {
-        let mut new_tensor: Tensor = self.clone();
-        new_tensor.gelu_inplace();
-        new_tensor
-    }
-
     pub fn matmul_transposed(a: &Tensor, b_t: &Tensor) -> Tensor {
         // a is [Batch, Seq, Emb] -> e.g., [1, 8, 128]
         // b_t is [Vocab, Emb]    -> e.g., [5000, 128]
@@ -422,19 +414,7 @@ impl Tensor {
     }
 
 
-    pub fn gather(&self, indices: &[u32]) -> Tensor {
-        let n_embd = self.shape[1];
-        let num_indices = indices.len();
-        let mut data = Vec::with_capacity(num_indices * n_embd);
 
-        for &idx in indices {
-            let start = idx as usize * n_embd;
-            let end = start + n_embd;
-            data.extend_from_slice(&self.data[start..end]);
-        }
-
-        Tensor::new(vec![num_indices, n_embd], data)
-    }
 
     pub fn transpose(&self) -> Tensor {
         let rank = self.shape.len();
@@ -501,11 +481,7 @@ impl Tensor {
     ///Computes the softmax of the tensor,
     /// allocating a new tensor containing the
     /// softmax of the tensor
-    pub fn softmax(self) -> Tensor {
-        let mut tensor = self.clone();
-        tensor.softmax_inplace();
-        tensor
-    }
+
     ///Adds two tensors together, returning a new Tensor representing
     /// the sum of the two tensors
     pub fn add(&self, other: &Tensor) -> Tensor {
@@ -540,7 +516,7 @@ impl Tensor {
     }
 
     ///creates a TensorView for compatibility with the safetensors library
-    pub fn to_view(&self) -> safetensors::tensor::TensorView {
+    pub fn to_view(&self) -> safetensors::tensor::TensorView<'_> {
         // We cast the f32 slice to a u8 slice.
         // This is safe because f32 is 4 bytes and we aren't changing the data.
         let data_u8: &[u8] = unsafe {

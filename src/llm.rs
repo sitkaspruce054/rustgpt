@@ -105,7 +105,7 @@ impl LLM {
         }
     }
 
-    pub fn embedding_forward(&self, input_ids: &[u32], seq_len: usize, batch_size: usize) -> (Tensor, Tensor) {
+    pub fn embedding_forward(&self, input_ids: &[u32], seq_len: usize, batch_size: usize) -> Tensor {
         let n_embd = self.wte.shape[1];
         let mut x_data = vec![0.0; batch_size * seq_len * n_embd];
 
@@ -128,8 +128,7 @@ impl LLM {
             }
         }
 
-        let x = Tensor::new(vec![batch_size, seq_len, n_embd], x_data);
-        (x.clone(), x) // Return x and a copy for the cache
+        Tensor::new(vec![batch_size, seq_len, n_embd], x_data)
     }
 
     pub fn from_pretrained(path: &str) -> Self {
@@ -183,38 +182,38 @@ impl LLM {
             config: (n_embd, block_size)
         }
     }
-
-    pub fn audit_weights(&self) {
-        println!("--- Model Weight Audit ---");
-        let weights = [
-            ("wte", &self.wte),
-            ("wpe", &self.wpe),
-            ("lm_head", &self.lm_head),
-            ("ln_f_gamma", &self.ln_f_gamma),
-        ];
-
-        for (name, tensor) in weights {
-            let mut nan_count = 0;
-            let mut inf_count = 0;
-            let mut max_val = f32::NEG_INFINITY;
-
-            for &v in &tensor.data {
-                if v.is_nan() { nan_count += 1; }
-                if v.is_infinite() { inf_count += 1; }
-                if v.abs() > max_val { max_val = v.abs(); }
-            }
-
-            println!("{}: MaxAbs={:.4}, NaNs={}, Infs={}", name, max_val, nan_count, inf_count);
-        }
-        println!("--------------------------");
-    }
+    // #[warn(unused)]
+    // pub fn audit_weights(&self) {
+    //     println!("--- Model Weight Audit ---");
+    //     let weights = [
+    //         ("wte", &self.wte),
+    //         ("wpe", &self.wpe),
+    //         ("lm_head", &self.lm_head),
+    //         ("ln_f_gamma", &self.ln_f_gamma),
+    //     ];
+    //
+    //     for (name, tensor) in weights {
+    //         let mut nan_count = 0;
+    //         let mut inf_count = 0;
+    //         let mut max_val = f32::NEG_INFINITY;
+    //
+    //         for &v in &tensor.data {
+    //             if v.is_nan() { nan_count += 1; }
+    //             if v.is_infinite() { inf_count += 1; }
+    //             if v.abs() > max_val { max_val = v.abs(); }
+    //         }
+    //
+    //         println!("{}: MaxAbs={:.4}, NaNs={}, Infs={}", name, max_val, nan_count, inf_count);
+    //     }
+    //     println!("--------------------------");
+    // }
 
     pub fn forward(&self, tokens: &[u32]) -> Tensor {
         let seq_len = tokens.len();
         let batch_size = 1;
 
         // 1. Embeddings
-        let (mut x, _) = self.embedding_forward(tokens, seq_len, batch_size);
+        let mut x = self.embedding_forward(tokens, seq_len, batch_size);
 
         // 2. Transformer Blocks
         for block in &self.blocks {
@@ -229,31 +228,7 @@ impl LLM {
         Tensor::matmul_transposed(&x_norm, &self.lm_head)
     }
 
-    // pub fn new_random(cfg: Config) -> Self {
-    //     let mut rng = rand::thread_rng();
-    //
-    //     // 1. WTE: Standard Normal (mu=0, sigma=0.02)
-    //     let wte = Tensor::random_init(vec![cfg.vocab_size, cfg.n_embd], 0.02);
-    //
-    //     // 2. WPE: Standard Normal (mu=0, sigma=0.02)
-    //     let wpe = Tensor::random_init(vec![cfg.block_size, cfg.n_embd], 0.02);
-    //
-    //     let mut blocks = Vec::new();
-    //     for i in 0..cfg.n_layer {
-    //         // Scale weights by 1/sqrt(N_layer) to keep residual variance stable
-    //         let res_scale = 1.0 / (cfg.n_layer as f32).sqrt();
-    //         blocks.push(TransformerBlock::new_random(i, cfg, res_scale));
-    //     }
-    //
-    //     LLM {
-    //         wte,
-    //         wpe,
-    //         blocks,
-    //         ln_f_gamma: Tensor::constant(vec![cfg.n_embd], 1.0),
-    //         ln_f_beta: Tensor::constant(vec![cfg.n_embd], 0.0),
-    //         lm_head: Tensor::constant(vec![cfg.n_embd, cfg.vocab_size], 0.0), // Tying usually happens later
-    //     }
-    // }
+
 
     pub fn save_checkpoint(&self, path: &str) {
         let mut map = std::collections::HashMap::new();
@@ -351,9 +326,7 @@ impl LLM {
             }
         }
     }
-    pub fn n_embd(&self) -> usize {
-        self.wte.shape[1]
-    }
+
 
     pub fn calculate_loss(&self, logits: &Tensor, targets: &[u32]) -> (f32, Tensor) {
         let vocab_size = logits.shape[logits.shape.len() - 1];
@@ -413,21 +386,17 @@ impl LLM {
         let seq_len = block_size;
 
         // 2. Call embedding_forward with the correct dimensions
-        let (x_emb, _wte_out) = self.embedding_forward(input_ids, seq_len, batch_size);
-        //println!("Start Shape: {:?}", x_emb.shape); // Expect [seq_len, 768]
-        let mut x = x_emb.clone();
+        let mut x = self.embedding_forward(input_ids, seq_len, batch_size);
 
         let mut block_caches = Vec::with_capacity(self.blocks.len());
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (_, block) in self.blocks.iter().enumerate() {
             let (x_next, b_cache) = block.forward_train(&x);
             x = x_next;
             //println!("Block {} output shape: {:?}", i, x.shape); // If this says 1024, the bug is in the block
             block_caches.push(b_cache);
         }
 
-        // 3. Capture the state before Final Normalization
-        // This is the gradient destination for the final LayerNorm backward pass
-        let pre_ln_f_x = x.clone();
+
 
         // 4. Final LayerNorm
         let (ln_f_out, ln_f_x_hat, ln_f_inv_std) = Tensor::layernorm_for_train(
@@ -435,12 +404,11 @@ impl LLM {
         );
 
         // 5. LM Head (Logits)
-        let logits = Tensor::matmul(&x, &self.lm_head.transpose());
+        let logits = Tensor::matmul_transposed(&ln_f_out, &self.lm_head);
         let cache = ForwardCache {
             token_ids: input_ids.to_vec(),
-            initial_embeddings: x_emb,
             block_caches,
-            pre_ln_f_x,    // <--- Added
+           // <--- Added
             ln_f_x_hat,
             ln_f_inv_std,
             final_norm_out: ln_f_out,
@@ -510,17 +478,17 @@ impl LLM {
         );
     }
 
-    fn get_last_row(&self, logits: &Tensor) -> Vec<f32> {
-            // logits shape: [seq_len, vocab_size]
-            let seq_len = logits.shape[0];
-            let vocab_size = logits.shape[1];
-
-            let start = (seq_len - 1) * vocab_size;
-            let end = start + vocab_size;
-
-            // Return just the last row as a flat vector
-            logits.data[start..end].to_vec()
-        }
+    // fn get_last_row(&self, logits: &Tensor) -> Vec<f32> {
+    //         // logits shape: [seq_len, vocab_size]
+    //         let seq_len = logits.shape[0];
+    //         let vocab_size = logits.shape[1];
+    //
+    //         let start = (seq_len - 1) * vocab_size;
+    //         let end = start + vocab_size;
+    //
+    //         // Return just the last row as a flat vector
+    //         logits.data[start..end].to_vec()
+    //     }
 
     pub fn new_random(
         vocab_size: usize,
@@ -576,8 +544,8 @@ impl LLM {
         }
 
         fn weighted_random_choice(&self, probs: Vec<f32>) -> u32 {
-            let mut rng = rand::rng(); // In Rand 0.9, use rng() instead of thread_rng()
-            let roll: f32 = rng.random(); // In Rand 0.9, .gen() is now .random()
+            let mut rng = rand::rng();
+            let roll: f32 = rng.random();
 
             let mut cumulative_prob = 0.0;
             for (idx, &prob) in probs.iter().enumerate() {
@@ -600,8 +568,6 @@ impl LLM {
         temperature: f32,
         top_p: f32
     ) -> u32 {
-        // 1. Apply Penalties FIRST
-        // This discourages the "years years years" loop at the source.
         if !tokens_so_far.is_empty() {
             let mut counts = std::collections::HashMap::new();
             for &t in tokens_so_far {
@@ -619,8 +585,8 @@ impl LLM {
             }
         }
 
-        // 2. Apply Temperature SECOND
-        // Note: If temperature is 1.0, this does nothing (which is correct)
+       //Apply Temperature
+
         if temperature != 1.0 {
             let inv_temp = 1.0 / temperature;
             for val in logits.iter_mut() {
@@ -628,10 +594,10 @@ impl LLM {
             }
         }
 
-        // 3. Softmax to get probabilities
+        //Softmax to get probabilities
         let probs = self.softmax_logits(logits);
 
-        // 4. Top-P (Nucleus) Filtering (Your existing logic)
+        //Top-P (Nucleus) Filtering (Your existing logic)
         let mut indices: Vec<usize> = (0..probs.len()).collect();
         indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap());
 
@@ -645,7 +611,7 @@ impl LLM {
             }
         }
 
-        // Re-normalize the nucleus
+        //Re-normalize
         let mut filtered_probs = vec![0.0; probs.len()];
         let mut sum = 0.0;
         for &idx in &indices[..=last_idx] {
